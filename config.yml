@@ -1,12 +1,12 @@
 db:
   dsn: "root:123456@/drcash"
-  table: "tracking_lead_log"
-  log_table: "bus_log"
+  service: "lead"
+  event_store: "tracking_lead_log"
 services:
-  - service: "crm"
+  - name: "crm"
     access_token: "111111111"
-    url_web_hook: "v1/crm"
+    url: "v1/crm"
 
-  - service: "order"
+  - name: "order"
+    url: "v1/crm"
     access_token: "222222222"
-    url_web_hook: "v1/crm"
