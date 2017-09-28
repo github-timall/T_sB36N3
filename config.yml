@@ -1,5 +1,5 @@
 db:
-  dsn: "root:123456@/drcash"
+  dsn: "root@/drcash"
   service: "lead"
   event_store: "tracking_lead_log"
 services:
