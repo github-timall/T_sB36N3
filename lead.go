@@ -3,7 +3,6 @@ package main
 import (
 	"database/sql"
 	"strconv"
-	"encoding/json"
 )
 
 type Lead struct {
@@ -19,12 +18,10 @@ type Lead struct {
 
 type Event struct {
 	Id 			int
-	EntityEvent int
-	JsonObject 	string
+	Object 		interface{}
 }
 func addLeadEvents(db *sql.DB) (err error) {
-	//loc, _ := time.LoadLocation("Europe/Moscow")
-	//time.Now().In(loc).Format("2006-01-02 15:04:05")
+	//лид тянет старую реализацию важно хранить в таблице логов/эвентов тип эвента создание, статус, выплата, тд
 
 	var query string
 	var eventLastId int
@@ -32,32 +29,32 @@ func addLeadEvents(db *sql.DB) (err error) {
 	err = db.QueryRow("SELECT event_id FROM vein_send_log ORDER BY event_id DESC LIMIT 1;").Scan(&eventLastId)
 
 	if err != nil {
-		query = "SELECT id, lead_id, c_time, sum, status,client_age, client_gender, client_region FROM tracking_lead_log;"
+		query = "SELECT id FROM tracking_lead_log;"
 	} else {
-		query = "SELECT id, lead_id, c_time, sum, status,client_age, client_gender, client_region FROM tracking_lead_log WHERE id > " + strconv.Itoa(eventLastId) + ";"
+		query = "SELECT id FROM tracking_lead_log WHERE id > " + strconv.Itoa(eventLastId) + ";"
 	}
 
-	rows, err := db.Query(query)
+	var rows *sql.Rows
+	rows, err = db.Query(query)
 	if err != nil {
 		return err
 	}
 
-	var id, lead_id sql.NullInt64
-	var sum sql.NullFloat64
-	var create_at, status, client_age, client_gender, client_region sql.NullString
+	var id sql.NullInt64
 
 	for rows.Next() {
-		err = rows.Scan(&id, &lead_id, &create_at, &sum, &status, &client_age, &client_gender, &client_region)
+		err = rows.Scan(&id)
 		if err != nil {
 			return err
 		}
 
-		stmt, err := db.Prepare("INSERT INTO vein_send_log SET event_id=?, entity_type=?, entity_id=?, entity_event=?")
+		var stmt *sql.Stmt
+		stmt, err = db.Prepare("INSERT INTO vein_send_log SET event_id=?, entity_type=?")
 		if err != nil {
 			return err
 		}
 
-		_, err = stmt.Exec(&id, "lead", &lead_id, 1)
+		_, err = stmt.Exec(&id, "lead")
 		if err != nil {
 			return err
 		}
@@ -68,7 +65,6 @@ func addLeadEvents(db *sql.DB) (err error) {
 func getLeadEventsFirst(db *sql.DB) (events []Event, err error) {
 	query := "SELECT " +
 			"vein.id as vein_id," +
-			"vein.entity_event as vein_entity_event," +
 			"entity.id," +
 			"entity.lead_id," +
 			"entity.c_time," +
@@ -77,14 +73,16 @@ func getLeadEventsFirst(db *sql.DB) (events []Event, err error) {
 			"entity.client_age," +
 			"entity.client_gender," +
 			"entity.client_region " +
-		"FROM tracking_lead_log entity LEFT JOIN vein_send_log vein ON vein.event_id = entity.id " +
-		"WHERE try_number = ?"
-	rows, err := db.Query(query, 0)
+		"FROM tracking_lead_log entity " +
+		"LEFT JOIN vein_send_log vein ON vein.event_id = entity.id AND vein.entity_type = 'lead'" +
+		"WHERE try_number = ? AND try_success = 0"
+	var rows *sql.Rows
+	rows, err = db.Query(query, 0)
 	if err != nil {
 		return
 	}
 
-	var vein_id, vein_entity_event int
+	var vein_id int
 	var id, lead_id sql.NullInt64
 	var sum sql.NullFloat64
 	var create_at, status, client_age, client_gender, client_region sql.NullString
@@ -92,7 +90,7 @@ func getLeadEventsFirst(db *sql.DB) (events []Event, err error) {
 	for rows.Next() {
 		var lead Lead
 		var event Event
-		err = rows.Scan(&vein_id, &vein_entity_event, &id, &lead_id, &create_at, &sum, &status, &client_age, &client_gender, &client_region)
+		err = rows.Scan(&vein_id, &id, &lead_id, &create_at, &sum, &status, &client_age, &client_gender, &client_region)
 		if err != nil {
 			return
 		}
@@ -121,10 +119,9 @@ func getLeadEventsFirst(db *sql.DB) (events []Event, err error) {
 		if client_region.Valid {
 			lead.ClientRegion = client_region.String
 		}
+
 		event.Id = vein_id
-		event.EntityEvent = vein_entity_event
-		jsonData, _ := json.Marshal(lead)
-		event.JsonObject = string(jsonData)
+		event.Object = lead
 		events = append(events, event)
 	}
 	return

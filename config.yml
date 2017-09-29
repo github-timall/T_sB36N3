@@ -1,12 +1,8 @@
+service: "lead"
 db:
-  dsn: "root@/drcash"
-  service: "lead"
+  dsn: "root:123456@/drcash"
   event_store: "tracking_lead_log"
 services:
   - name: "crm"
-    access_token: "111111111"
-    url: "v1/crm"
-
-  - name: "order"
-    url: "v1/crm"
-    access_token: "222222222"
+    access_token: "local"
+    url: "http://dr.microservices.crm/v1/vein/lead-status"
