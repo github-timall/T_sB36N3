@@ -5,11 +5,6 @@ import (
 	"io/ioutil"
 )
 
-type Db struct {
-	Dsn		 	string `yaml:"dsn"`
-	EventStore 	string `yaml:"event_store"`
-}
-
 type Service struct {
 	Name     	string `yaml:"name"`
 	Url  		string `yaml:"url"`
@@ -17,9 +12,10 @@ type Service struct {
 }
 
 type Config struct {
-	Db       	Db
-	Service		string `yaml:"service"`
-	Services 	[]Service `yaml:"services"`
+	Service		string 		`yaml:"service"`
+	DsnEvent    string 		`yaml:"dsn_event"`
+	DsnVein     string		`yaml:"dsn_vein"`
+	Services 	[]Service 	`yaml:"services"`
 }
 
 func LoadConfig() (config *Config, err error) {
