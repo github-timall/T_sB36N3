@@ -41,7 +41,7 @@ func initSendLog(db *sql.DB) (err error) {
 		"`event_type` 	VARCHAR(255) DEFAULT NULL," +
 		"`event_id` 	INT NOT NULL DEFAULT 0," +
 
-		"`entity_type` 		VARCHAR(255) DEFAULT NULL," +
+		"`entity_type` 	VARCHAR(255) DEFAULT NULL," +
 		"`entity_id` 	INT NOT NULL DEFAULT 0," +
 
 		"`try_success` 	TINYINT(1) DEFAULT 0," +
