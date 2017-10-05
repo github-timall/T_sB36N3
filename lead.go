@@ -17,79 +17,70 @@ type LeadEvent struct {
 	CreatedAt		string 	`json:"created_at"`
 }
 
-func (event LeadEvent) getEventType() string {
+func (event LeadEvent) GetEventType() string {
 	return "status"
 }
 
-func (event LeadEvent) getEventId() int {
+func (event LeadEvent) GetEventId() int {
 	return int(event.Id)
 }
 
-func (event LeadEvent) getEntityType() string {
+func (event LeadEvent) GetEntityType() string {
 	return "lead"
 }
 
-func (event LeadEvent) getEntityId() int {
+func (event LeadEvent) GetEntityId() int {
 	return int(event.LeadId)
 }
 
-func (event LeadEvent) getJsonString() string {
+func (event LeadEvent) GetJsonString() string {
 	b, _ := json.Marshal(event)
 	return string(b)
 }
 
-func getLeadEvents(db *sql.DB, lastEventId int) (events []LeadEvent, err error) {
-	var query string
+func GetLeadEvents(db *sql.DB, lastEventId int) ([]LeadEvent, error) {
+	var events []LeadEvent
 
 	if lastEventId == 0 {
-		query = "SELECT " +
-				"id, " +
-				"lead_id, " +
-				"c_time, " +
-				"sum, " +
-				"status, " +
-				"client_age, " +
-				"client_gender, " +
-				"client_region " +
-			"FROM tracking_lead_log WHERE id > 1486238;"
-	} else {
-		query = "SELECT " +
-				"id, " +
-				"lead_id, " +
-				"c_time, " +
-				"sum," +
-				"status, " +
-				"client_age, " +
-				"client_gender, " +
-				"client_region " +
-			"FROM tracking_lead_log " +
-			"WHERE id > " + strconv.Itoa(lastEventId) + ";"
-	}
-	var rows *sql.Rows
-	rows, err = db.Query(query)
-	if err != nil {
-		return
+		lastEventId = 1492666
 	}
 
-	var id, lead_id sql.NullInt64
+	query := "SELECT " +
+		"id, " +
+		"lead_id, " +
+		"c_time, " +
+		"sum," +
+		"status, " +
+		"client_age, " +
+		"client_gender, " +
+		"client_region " +
+	"FROM tracking_lead_log " +
+	"WHERE id > " + strconv.Itoa(lastEventId) + " LIMIT 1000;"
+
+	rows, err := db.Query(query)
+	if err != nil {
+		return events, err
+	}
+
+	var id, leadId sql.NullInt64
 	var sum sql.NullFloat64
-	var create_at, status, client_age, client_gender, client_region sql.NullString
+	var createAt, status, client_age, client_gender, client_region sql.NullString
 
 	for rows.Next() {
 		var event LeadEvent
-		err = rows.Scan(&id, &lead_id, &create_at, &sum, &status, &client_age, &client_gender, &client_region)
+		err := rows.Scan(&id, &leadId, &createAt, &sum, &status, &client_age, &client_gender, &client_region)
 		if err != nil {
-			return
+			return events, err
 		}
 
 		if id.Valid {
 			event.Id = id.Int64
 		}
-		if lead_id.Valid {
-			event.LeadId = lead_id.Int64
+		if leadId.Valid {
+			event.LeadId = leadId.Int64
 		}
-		if create_at.Valid {
-			event.CreatedAt = create_at.String
+		if createAt.Valid {
+			event.CreatedAt = createAt.String
 		}
 		if sum.Valid {
 			event.Sum = sum.Float64
@@ -109,5 +100,6 @@ func getLeadEvents(db *sql.DB, lastEventId int) (events []LeadEvent, err error) 
 
 		events = append(events, event)
 	}
-	return
+	rows.Close()
+	return events, nil
 }

@@ -1,0 +1,1 @@
+CREATE DATABASE `vein` COLLATE 'utf8_unicode_ci';

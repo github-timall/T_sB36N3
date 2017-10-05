@@ -18,15 +18,15 @@ type Config struct {
 	Services 	[]Service 	`yaml:"services"`
 }
 
-func LoadConfig() (config *Config, err error) {
+func LoadConfig() (config *Config) {
 	source, err := ioutil.ReadFile("config.yml")
 	if err != nil {
-		return
+		panic(err)
 	}
 
 	err = yaml.Unmarshal(source, &config)
 	if err != nil {
-		return
+		panic(err)
 	}
 	return
 }
