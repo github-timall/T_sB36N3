@@ -1,9 +1,11 @@
 package main
 
 import (
-	"database/sql"
-	"strconv"
 	"encoding/json"
+)
+
+const (
+	DEFAULT_EVENT_ID int = 1502288
 )
 
 type LeadEvent struct {
@@ -36,70 +38,4 @@ func (event LeadEvent) GetEntityId() int {
 func (event LeadEvent) GetJsonString() string {
 	b, _ := json.Marshal(event)
 	return string(b)
-}
-
-func GetLeadEvents(db *sql.DB, lastEventId int) ([]LeadEvent, error) {
-	var events []LeadEvent
-
-	if lastEventId == 0 {
-		lastEventId = 1492666
-	}
-
-	query := "SELECT " +
-		"id, " +
-		"lead_id, " +
-		"c_time, " +
-		"sum," +
-		"status, " +
-		"client_age, " +
-		"client_gender, " +
-		"client_region " +
-	"FROM tracking_lead_log " +
-	"WHERE id > " + strconv.Itoa(lastEventId) + " LIMIT 1000;"
-
-	rows, err := db.Query(query)
-	if err != nil {
-		return events, err
-	}
-
-	var id, leadId sql.NullInt64
-	var sum sql.NullFloat64
-	var createAt, status, client_age, client_gender, client_region sql.NullString
-
-	for rows.Next() {
-		var event LeadEvent
-		err := rows.Scan(&id, &leadId, &createAt, &sum, &status, &client_age, &client_gender, &client_region)
-		if err != nil {
-			return events, err
-		}
-
-		if id.Valid {
-			event.Id = id.Int64
-		}
-		if leadId.Valid {
-			event.LeadId = leadId.Int64
-		}
-		if createAt.Valid {
-			event.CreatedAt = createAt.String
-		}
-		if sum.Valid {
-			event.Sum = sum.Float64
-		}
-		if status.Valid {
-			event.Status = status.String
-		}
-		if client_age.Valid {
-			event.ClientAge = client_age.String
-		}
-		if client_gender.Valid {
-			event.ClientGender = client_gender.String
-		}
-		if client_region.Valid {
-			event.ClientRegion = client_region.String
-		}
-
-		events = append(events, event)
-	}
-	rows.Close()
-	return events, nil
 }

@@ -1,6 +1,6 @@
 service: "lead"
-dsn_event: "root@/drcash"
-dsn_vein: "root@/vein"
+dsn_event: "root:123456@/drcash"
+dsn_vein: "root:123456@/vein"
 services:
   - name: "crm"
     access_token: "local"

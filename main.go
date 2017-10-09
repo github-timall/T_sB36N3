@@ -3,13 +3,13 @@ package main
 import (
 	"database/sql"
 	_ "github.com/go-sql-driver/mysql"
-	"time"
 	"strconv"
-)
-
-var (
-	dbEvent *sql.DB
-	dbVein *sql.DB
+	"time"
+	"log"
+	"bytes"
+	"encoding/json"
+	"net/http"
+	"io/ioutil"
 )
 
 func checkErr(err error) {
@@ -29,57 +29,36 @@ func main() {
 	err = dbEvent.Ping()
 	checkErr(err)
 
-	dbVein, err = sql.Open("mysql", config.DsnVein)
+	dbVein, err := sql.Open("mysql", config.DsnVein)
 	checkErr(err)
 	defer dbVein.Close()
 
 	err = dbVein.Ping()
 	checkErr(err)
 
-	err = InitSendLog(dbVein)
+	err = InitVeinEvent(dbVein)
 	checkErr(err)
 
 	if config.Service == "lead" {
 		for _, service := range config.Services {
-			TransferLeadEvents(service)
+			go TransferLeadEvents(dbEvent, dbVein, service)
 		}
 	}
 
-	//var response Response
-	//
-	//for {
-	//	time.Sleep(time.Second)
-	//
-	//	for _, service := range config.Services {
-	//		veinFirstEvents, err := GetFirstEvents(dbVein, service)
-	//		checkErr(err)
-	//		for _, veinFirstEvent := range veinFirstEvents {
-	//			response = FetchEvent(veinFirstEvent, service)
-	//			UpdateEvent(dbVein, response)
-	//		}
-	//	}
-	//
-	//	for _, service := range config.Services {
-	//		veinSecondEvents, err := GetSecondEvents(dbVein, service)
-	//		checkErr(err)
-	//		for _, veinSecondEvent := range veinSecondEvents {
-	//			response = FetchEvent(veinSecondEvent, service)
-	//			UpdateEvent(dbVein, response)
-	//		}
-	//	}
-	//
-	//	for _, service := range config.Services {
-	//		veinThirdEvents, err := GetThirdEvents(dbVein, service)
-	//		checkErr(err)
-	//		for _, veinThirdEvent := range veinThirdEvents {
-	//			response = FetchEvent(veinThirdEvent, service)
-	//			UpdateEvent(dbVein, response)
-	//		}
-	//	}
-	//}
+	veinEvents := make(chan VeinEvent)
+	veinResponse := make(chan Response)
+
+	for _, service := range config.Services {
+		go VeinFirstEvents(dbVein, service, veinEvents)
+		go VeinSecondEvents(dbVein, service, veinEvents)
+		go VeinThirdEvents(dbVein, service, veinEvents)
+		go FetchVeinEvents(veinEvents, veinResponse, service)
+	}
+
+	SaveVeinEvents(dbVein, veinResponse)
 }
 
-func TransferLeadEvents(service Service) {
+func TransferLeadEvents(dbEvent *sql.DB, dbVein *sql.DB, service Service) {
 	var lastEventId int
 
 	var id, leadId sql.NullInt64
@@ -88,10 +67,10 @@ func TransferLeadEvents(service Service) {
 
 	var event LeadEvent
 
-	//for {
-		err := dbEvent.QueryRow("SELECT event_id FROM vein_send_log GROUP BY event_id ORDER BY event_id DESC LIMIT 1;").Scan(lastEventId)
+	for {
+		err := dbVein.QueryRow("SELECT event_id FROM vein_events GROUP BY event_id ORDER BY event_id DESC LIMIT 1;").Scan(&lastEventId)
 		if err != nil {
-			lastEventId = 1492666
+			lastEventId = DEFAULT_EVENT_ID
 		}
 
 		rows, err := dbEvent.Query("SELECT " +
@@ -108,7 +87,7 @@ func TransferLeadEvents(service Service) {
 		checkErr(err)
 
 		for rows.Next() {
-			err := rows.Scan(&id, &leadId, &createAt, &sum, &status, &client_age, &client_gender, &client_region)
+			err = rows.Scan(&id, &leadId, &createAt, &sum, &status, &client_age, &client_gender, &client_region)
 			checkErr(err)
 
 			if id.Valid {
@@ -150,31 +129,191 @@ func TransferLeadEvents(service Service) {
 				event.ClientRegion = ""
 			}
 
-			_, err = dbVein.Exec("INSERT vein_send_log SET service_name=?, event_type=?, event_id=?, entity_type=?, entity_id=?, data=?",
+			_, err = dbVein.Exec("INSERT vein_events SET service_name=?, event_type=?, event_id=?, entity_type=?, entity_id=?, data=?",
 				service.Name, event.GetEventType(), event.GetEventId(), event.GetEntityType(), event.GetEntityId(), event.GetJsonString())
 			checkErr(err)
 		}
 		rows.Close()
 		time.Sleep(time.Second)
-	//}
+	}
 }
 
-func LeadEvents(){
+func VeinFirstEvents(dbVein *sql.DB, service Service, veinEvents chan VeinEvent) {
+	query := "SELECT id, service_name, event_type, event_id, entity_type, entity_id, try_success, try_number, data FROM vein_events WHERE id IN (" +
+		"SELECT MIN(id) FROM vein_events WHERE entity_type = 'lead' AND service_name = ? AND try_success = 0 AND status = 1 GROUP BY entity_id" +
+		") AND try_number = 0 LIMIT 1000"
 
+	var ServiceName, EventType, EntityType, Data sql.NullString
+	var event VeinEvent
+
+	for {
+		rows, err := dbVein.Query(query, service.Name)
+		if err != nil {
+			checkErr(err)
+		}
+
+		for rows.Next() {
+			err = rows.Scan(&event.Id, &ServiceName, &EventType, &event.EventId, &EntityType, &event.EntityId, &event.TrySuccess, &event.TryNumber, &Data)
+			if err != nil {
+				checkErr(err)
+			}
+			if ServiceName.Valid {
+				event.ServiceName = ServiceName.String
+			}
+			if EventType.Valid {
+				event.EventType = EventType.String
+			}
+			if EntityType.Valid {
+				event.EntityType = EntityType.String
+			}
+			if Data.Valid {
+				event.Data = Data.String
+			}
+			VeinStatusPending(dbVein, event.Id)
+			veinEvents <- event
+		}
+		rows.Close()
+		time.Sleep(time.Second)
+	}
 }
 
-func SaveLeadEventsVein(){
+func VeinSecondEvents(dbVein *sql.DB, service Service, veinEvents chan VeinEvent) {
+	loc, _ := time.LoadLocation("Europe/Moscow")
+	query := "SELECT id, service_name, event_type, event_id, entity_type, entity_id, try_success, try_number, data FROM vein_events WHERE id IN (" +
+		"SELECT MIN(id) FROM vein_events WHERE entity_type = 'lead' AND service_name = ? AND try_success = 0 AND try_time < ? AND status = 1 GROUP BY entity_id" +
+		") AND try_number = 1 LIMIT 1000"
 
+	var ServiceName, EventType, EntityType, Data sql.NullString
+	var event VeinEvent
+
+	for {
+		DateTime := time.Now().In(loc).Add(- time.Minute * time.Duration(VEIN_SECOND_ATTEMPT)).Format("2006-01-02 15:04:05")
+		rows, err := dbVein.Query(query, service.Name, DateTime)
+		if err != nil {
+			checkErr(err)
+		}
+
+		for rows.Next() {
+			err = rows.Scan(&event.Id, &ServiceName, &EventType, &event.EventId, &EntityType, &event.EntityId, &event.TrySuccess, &event.TryNumber, &Data)
+			if err != nil {
+				checkErr(err)
+			}
+			if ServiceName.Valid {
+				event.ServiceName = ServiceName.String
+			}
+			if EventType.Valid {
+				event.EventType = EventType.String
+			}
+			if EntityType.Valid {
+				event.EntityType = EntityType.String
+			}
+			if Data.Valid {
+				event.Data = Data.String
+			}
+			VeinStatusPending(dbVein, event.Id)
+			veinEvents <- event
+		}
+		rows.Close()
+		time.Sleep(time.Second)
+	}
 }
 
-func VeinEvents(){
+func VeinThirdEvents(dbVein *sql.DB, service Service, veinEvents chan <- VeinEvent) {
+	loc, _ := time.LoadLocation("Europe/Moscow")
+	query := "SELECT id, service_name, event_type, event_id, entity_type, entity_id, try_success, try_number, data FROM vein_events WHERE id IN (" +
+		"SELECT MIN(id) FROM vein_events WHERE entity_type = 'lead' AND service_name = ? AND try_success = 0 AND try_time < ? AND status = 1 GROUP BY entity_id" +
+		") AND try_number = 2 LIMIT 1000"
 
+	var ServiceName, EventType, EntityType, Data sql.NullString
+	var event VeinEvent
+
+	for {
+		DateTime := time.Now().In(loc).Add(- time.Minute * time.Duration(VEIN_THIRD_ATTEMPT)).Format("2006-01-02 15:04:05")
+		rows, err := dbVein.Query(query, service.Name, DateTime)
+		if err != nil {
+			checkErr(err)
+		}
+
+		for rows.Next() {
+			err = rows.Scan(&event.Id, &ServiceName, &EventType, &event.EventId, &EntityType, &event.EntityId, &event.TrySuccess, &event.TryNumber, &Data)
+			if err != nil {
+				checkErr(err)
+			}
+			if ServiceName.Valid {
+				event.ServiceName = ServiceName.String
+			}
+			if EventType.Valid {
+				event.EventType = EventType.String
+			}
+			if EntityType.Valid {
+				event.EntityType = EntityType.String
+			}
+			if Data.Valid {
+				event.Data = Data.String
+			}
+			VeinStatusPending(dbVein, event.Id)
+			veinEvents <- event
+		}
+		rows.Close()
+		time.Sleep(time.Second)
+	}
+	close(veinEvents)
 }
 
-func FetchVeinEvents(){
-
+func VeinStatusPending(dbVein *sql.DB, veinEventId int) {
+	_, err := dbVein.Exec("UPDATE vein_events SET status=? WHERE id=?", VEIN_STATUS_PENDING, veinEventId)
+	checkErr(err)
 }
 
-func SaveVeinEvents(){
+func FetchVeinEvents(veinEvents <- chan VeinEvent, veinResponse chan <- Response, service Service) {
+	var response Response
+	b := new(bytes.Buffer)
+	client := &http.Client{
+		Timeout: time.Second * 10,
+	}
 
+	for veinEvent := range veinEvents {
+		log.Printf("VEIN_EVENT: %+v\n", veinEvent)
+
+		json.NewEncoder(b).Encode(veinEvent.Data)
+
+		req, err := http.NewRequest("POST", service.Url, b)
+		checkErr(err)
+
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer " + service.AccessToken)
+
+		resp, err := client.Do(req)
+		checkErr(err)
+
+		response.VeinEvent = veinEvent
+		response.StatusCode = resp.StatusCode
+
+		body, _ := ioutil.ReadAll(resp.Body)
+		resp.Body.Close()
+
+		response.Body = string(body)
+
+		log.Printf("RESPONSE: %+v\n", response)
+		veinResponse <- response
+	}
+	close(veinResponse)
+}
+
+func SaveVeinEvents(dbVein *sql.DB, veinResponses <- chan Response) {
+	loc, _ := time.LoadLocation("Europe/Moscow")
+
+	for veinResponse := range veinResponses {
+		veinResponse.VeinEvent.TryNumber++
+
+		if veinResponse.StatusCode == 200 {
+			veinResponse.VeinEvent.TrySuccess = 1
+		}
+
+		tryTime := time.Now().In(loc).Format("2006-01-02 15:04:05")
+
+		_, err := dbVein.Exec("UPDATE vein_events SET status=?, try_success=?, try_number=?, try_time=?, try_response=? WHERE id=?",
+			VEIN_STATUS_READY, veinResponse.VeinEvent.TrySuccess, veinResponse.VeinEvent.TryNumber, tryTime, veinResponse.Body, veinResponse.VeinEvent.Id)
+		checkErr(err)
+	}
 }
