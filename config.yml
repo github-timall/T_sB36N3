@@ -1,7 +1,21 @@
-service: "lead"
-dsn_event: "root:123456@/drcash"
+service_name: "order"
+dsn_event: "root:123456@/order"
 dsn_vein: "root:123456@/vein"
+
+http_client_settings:
+  timeout: 10
+
+worker_settings:
+  transfers_run: true
+
 services:
   - name: "crm"
     access_token: "local"
-    url: "http://dr.microservices.crm/v1/vein/lead-status"
+    url: "http://dr.microservices.crm/v1/"
+    actions:
+      - url: "vein/lead-status"
+        entity_type: "order"
+        event_type: "status"
+      - url: "vein/lead-status"
+        entity_type: "order"
+        event_type: "payment"
